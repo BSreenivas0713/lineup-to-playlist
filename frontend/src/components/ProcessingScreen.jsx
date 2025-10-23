@@ -1,14 +1,41 @@
+import { Box, Typography, CircularProgress, Paper } from "@mui/material";
+
 export default function ProcessingScreen({ uploading, processing }) {
   return (
-    <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
-      <div className="animate-spin w-12 h-12 border-4 border-green-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-      {uploading && <p className="text-gray-700 font-medium">Uploading image...</p>}
+    <Paper
+      elevation={6}
+      sx={{
+        p: 6,
+        borderRadius: 4,
+        backgroundColor: "#191414", // Spotify black
+        color: "white",
+        textAlign: "center",
+        maxWidth: 500,
+        mx: "auto",
+      }}
+    >
+      <CircularProgress
+        size={60}
+        thickness={5}
+        sx={{ color: "#1DB954", mb: 3 }}
+      />
+
+      {uploading && (
+        <Typography variant="h6" fontWeight="medium">
+          Uploading image...
+        </Typography>
+      )}
+
       {processing && (
         <>
-          <p className="text-gray-700 font-medium mb-2">Processing your lineup...</p>
-          <p className="text-sm text-gray-500">Using AI to extract artist names...</p>
+          <Typography variant="h6" fontWeight="medium" mb={1}>
+            Processing your lineup...
+          </Typography>
+          <Typography variant="body2" color="#b3b3b3">
+            Using AI to extract artist names...
+          </Typography>
         </>
       )}
-    </div>
+    </Paper>
   );
 }

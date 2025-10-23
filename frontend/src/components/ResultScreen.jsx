@@ -1,30 +1,95 @@
+import { Box, Typography, Paper, Chip, Button, Avatar, Stack } from "@mui/material";
+import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
+
 export default function ResultScreen({ result, extractedArtists, onReset }) {
   return (
-    <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
-      <div className="bg-green-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4 text-4xl">✅</div>
-      <h2 className="text-2xl font-bold text-gray-800 mb-2">Playlist Created!</h2>
-      <p className="text-gray-600 mb-6">
+    <Paper
+      elevation={6}
+      sx={{
+        p: 6,
+        borderRadius: 4,
+        backgroundColor: "#191414", // Spotify black
+        color: "white",
+        textAlign: "center",
+        maxWidth: 600,
+        mx: "auto",
+      }}
+    >
+      {/* Success Icon */}
+      <Avatar
+        sx={{
+          bgcolor: "#1DB954",
+          width: 64,
+          height: 64,
+          mx: "auto",
+          mb: 3,
+        }}
+      >
+        <CheckCircleRoundedIcon sx={{ fontSize: 36, color: "#191414" }} />
+      </Avatar>
+
+      {/* Heading */}
+      <Typography variant="h5" fontWeight="bold" mb={1}>
+        Playlist Created!
+      </Typography>
+      <Typography variant="body1" color="#b3b3b3" mb={3}>
         Found {extractedArtists.length} artists and added {result.tracks_added} tracks to your playlist.
-      </p>
+      </Typography>
+
+      {/* Artists List */}
       {extractedArtists.length > 0 && (
-        <div className="mb-6">
-          <p className="text-sm text-gray-500 mb-3">Artists found:</p>
-          <div className="flex flex-wrap gap-2 justify-center">
+        <Box mb={3}>
+          <Typography variant="caption" color="#666" mb={1} display="block">
+            Artists found:
+          </Typography>
+          <Stack direction="row" spacing={1} justifyContent="center" flexWrap="wrap">
             {extractedArtists.map((artist, i) => (
-              <span key={i} className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium">{artist}</span>
+              <Chip
+                key={i}
+                label={artist}
+                sx={{
+                  bgcolor: "#1DB954",
+                  color: "#191414",
+                  fontWeight: 500,
+                  mb: 1,
+                }}
+              />
             ))}
-          </div>
-        </div>
+          </Stack>
+        </Box>
       )}
-      <a
+
+      {/* Open Playlist Button */}
+      <Button
         href={result.playlist_url}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-block w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-6 rounded-full shadow-lg transition-all duration-200 mb-4"
+        fullWidth
+        variant="contained"
+        sx={{
+          backgroundColor: "#1DB954",
+          color: "#191414",
+          fontWeight: 600,
+          py: 1.5,
+          mb: 2,
+          "&:hover": { backgroundColor: "#1ed760" },
+        }}
       >
         Open in Spotify
-      </a>
-      <button onClick={onReset} className="text-gray-600 hover:text-gray-800 text-sm font-medium">Create another playlist</button>
-    </div>
+      </Button>
+
+      {/* Reset Button */}
+      <Button
+        onClick={onReset}
+        variant="text"
+        sx={{
+          color: "#b3b3b3",
+          fontSize: "0.875rem",
+          "&:hover": { color: "white" },
+        }}
+      >
+        Create another playlist
+      </Button>
+    </Paper>
   );
 }

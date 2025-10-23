@@ -11,12 +11,13 @@ from flask import Flask, request, jsonify, session, redirect
 from flask_cors import CORS
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
-import openai
+from openai import OpenAI
 import os
 from PIL import Image
 import base64
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
+import traceback
 
 load_dotenv()
 
@@ -38,7 +39,7 @@ SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
 SPOTIFY_REDIRECT_URI = 'http://127.0.0.1:5000/api/callback'
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
-openai.api_key = OPENAI_API_KEY
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 SCOPE = 'playlist-modify-public playlist-modify-private'
 
@@ -117,7 +118,8 @@ def extract_artists_with_ai(image_path):
         with open(image_path, 'rb') as image_file:
             base64_image = base64.b64encode(image_file.read()).decode('utf-8')
         
-        response = openai.chat.completions.create(
+        print("querying openai")
+        response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {
@@ -125,7 +127,7 @@ def extract_artists_with_ai(image_path):
                     "content": [
                         {
                             "type": "text",
-                            "text": "This is a concert or music festival lineup poster. List ONLY the artist/DJ/band names performing, one per line. Do not include dates, venues, sponsors, or other text. Only list the actual performers/artists. Note that there might be a headliner in a different font size, or different tiers of artists in different sizes and styles."
+                            "text": "This is a concert or music festival lineup poster. List ONLY the artist/DJ/band names performing, one per line. Do not include dates, venues, sponsors, or other text. Only list the actual performers/artists. Note that there might be a headliner in a different font size, or different tiers of artists in different sizes and styles. There might be different delimiters between artist names, do not include any pre or post punctuation."
                         },
                         {
                             "type": "image_url",
@@ -146,7 +148,7 @@ def extract_artists_with_ai(image_path):
         return artists[:20]  # Limit to 20 artists
         
     except Exception as e:
-        print(f"Error with OpenAI Vision: {e}")
+        print(f"Error with OpenAI Vision: {traceback.format_exc()}")
         return []
 
 def search_artist_on_spotify(sp, artist_name):
@@ -184,6 +186,7 @@ def upload():
     filename = secure_filename(file.filename)
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     file.save(filepath)
+    print("hello")
     
     try:
         # Extract artists from image using AI
@@ -200,9 +203,10 @@ def upload():
         # Search for artists and collect tracks
         all_track_uris = []
         found_artists = []
-        
+        print(potential_artists)
         for artist_name in potential_artists:
             artist_id = search_artist_on_spotify(sp, artist_name)
+            print(artist_name, artist_id)
             if artist_id:
                 found_artists.append(artist_name)
                 track_uris = get_artist_top_tracks(sp, artist_id)
