@@ -19,8 +19,16 @@ from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 import traceback
 from datetime import datetime
+import logging
 
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config.update(
@@ -37,7 +45,7 @@ CORS(app, supports_credentials=True, origins=[os.getenv('FRONTEND_URL', 'http://
 # API credentials
 SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
 SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
-SPOTIFY_REDIRECT_URI = 'http://127.0.0.1:5000/api/callback'
+SPOTIFY_REDIRECT_URI = os.getenv('SPOTIFY_REDIRECT_URI', 'http://127.0.0.1:5000/api/callback')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
@@ -67,32 +75,31 @@ def callback():
     """Handle Spotify OAuth callback"""
     sp_oauth = get_spotify_oauth()
     code = request.args.get('code')
-    
+
     if not code:
         return redirect(f"{os.getenv('FRONTEND_URL')}?error=auth_failed")
-    
+
     try:
         token_info = sp_oauth.get_access_token(code)
         session['token_info'] = token_info
-        print(session)
-        print("----AFTER LOGIN-----")
-        
+        logger.info("User successfully authenticated with Spotify")
+        logger.debug(f"Session data: {session}")
+
         # Redirect back to frontend with success
         return redirect(f"{os.getenv('FRONTEND_URL')}?auth=success")
     except Exception as e:
-        print(f"Auth error: {e}")
+        logger.error(f"Spotify OAuth error: {e}")
         return redirect(f"{os.getenv('FRONTEND_URL')}?error=auth_failed")
 
 @app.route('/api/auth/status')
 def auth_status():
     """Check if user is authenticated"""
-    print(session)
+    logger.debug(f"Checking auth status, session: {session}")
     if 'token_info' in session:
         try:
-            print(1)
             sp = spotipy.Spotify(auth=session['token_info']['access_token'])
             user = sp.current_user()
-            print(2)
+            logger.info(f"User {user.get('display_name')} authenticated")
             return jsonify({
                 'authenticated': True,
                 'user': {
@@ -100,11 +107,11 @@ def auth_status():
                     'id': user.get('id')
                 }
             })
-        except:
-            print(3)
+        except Exception as e:
+            logger.warning(f"Auth token invalid or expired: {e}")
             session.clear()
             return jsonify({'authenticated': False})
-    print(4)
+    logger.debug("No auth token found in session")
     return jsonify({'authenticated': False})
 
 @app.route('/api/auth/logout', methods=['POST'])
@@ -119,7 +126,7 @@ def extract_artists_with_ai(image_path):
         with open(image_path, 'rb') as image_file:
             base64_image = base64.b64encode(image_file.read()).decode('utf-8')
 
-        print("querying openai")
+        logger.info("Querying OpenAI Vision API to extract event name and artists")
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -159,7 +166,7 @@ Important notes:
             ],
             max_tokens=500
         )
-        print(response)
+        logger.debug(f"OpenAI response: {response}")
 
         content = response.choices[0].message.content
 
@@ -185,7 +192,7 @@ Important notes:
         }
 
     except Exception as e:
-        print(f"Error with OpenAI Vision: {traceback.format_exc()}")
+        logger.error(f"Error with OpenAI Vision: {traceback.format_exc()}")
         return {'event_name': 'Music Festival', 'artists': []}
 
 def search_artist_on_spotify(sp, artist_name):
@@ -195,7 +202,7 @@ def search_artist_on_spotify(sp, artist_name):
         if results['artists']['items']:
             return results['artists']['items'][0]['id']
     except Exception as e:
-        print(f"Error searching for {artist_name}: {e}")
+        logger.warning(f"Error searching for artist '{artist_name}': {e}")
     return None
 
 def get_artist_top_tracks(sp, artist_id, num_tracks=3):
@@ -204,7 +211,7 @@ def get_artist_top_tracks(sp, artist_id, num_tracks=3):
         results = sp.artist_top_tracks(artist_id)
         return [track['uri'] for track in results['tracks'][:num_tracks]]
     except Exception as e:
-        print(f"Error getting top tracks: {e}")
+        logger.warning(f"Error getting top tracks: {e}")
         return []
 
 @app.route('/api/extract-artists', methods=['POST'])
@@ -246,7 +253,7 @@ def extract_artists():
     except Exception as e:
         if os.path.exists(filepath):
             os.remove(filepath)
-        print(f"Error: {e}")
+        logger.error(f"Error extracting artists: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -272,10 +279,10 @@ def create_playlist():
         all_track_uris = []
         found_artists = []
 
-        print(f"Searching for {len(artists)} artists...")
+        logger.info(f"Searching Spotify for {len(artists)} artists")
         for artist_name in artists:
             artist_id = search_artist_on_spotify(sp, artist_name)
-            print(f"{artist_name}: {artist_id}")
+            logger.debug(f"Artist lookup: {artist_name} -> {artist_id}")
             if artist_id:
                 found_artists.append(artist_name)
                 track_uris = get_artist_top_tracks(sp, artist_id, num_tracks=3)
@@ -301,7 +308,7 @@ def create_playlist():
             batch = all_track_uris[i:i+100]
             sp.playlist_add_items(playlist['id'], batch)
 
-        print(f"Playlist created: {playlist_name} with {len(all_track_uris)} tracks")
+        logger.info(f"Playlist created: '{playlist_name}' with {len(all_track_uris)} tracks from {len(found_artists)} artists")
 
         return jsonify({
             'success': True,
@@ -312,9 +319,14 @@ def create_playlist():
         })
 
     except Exception as e:
-        print(f"Error creating playlist: {e}")
-        print(traceback.format_exc())
+        logger.error(f"Error creating playlist: {e}")
+        logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    # Railway needs host='0.0.0.0' and uses PORT environment variable
+    # For local development, you can set FLASK_HOST=127.0.0.1 in your .env
+    debug_mode = os.getenv('FLASK_DEBUG', 'False') == 'True'
+    host = os.getenv('FLASK_HOST', '0.0.0.0')
+    port = int(os.getenv('PORT', 5000))
+    app.run(debug=debug_mode, host=host, port=port)
