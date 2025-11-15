@@ -32,6 +32,9 @@ export default function ResultScreen({ result, extractedArtists, onReset }) {
       <Typography variant="h5" fontWeight="bold" mb={1}>
         Playlist Created!
       </Typography>
+      <Typography variant="h6" color="#1DB954" mb={2} fontWeight={600}>
+        {result.playlist_name}
+      </Typography>
       <Typography variant="body1" color="#b3b3b3" mb={3}>
         Found {extractedArtists.length} artists and added {result.tracks_added} tracks to your playlist.
       </Typography>

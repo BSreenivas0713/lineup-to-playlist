@@ -18,6 +18,7 @@ import base64
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 import traceback
+from datetime import datetime
 
 load_dotenv()
 
@@ -113,11 +114,11 @@ def logout():
     return jsonify({'success': True})
 
 def extract_artists_with_ai(image_path):
-    """Extract artist names using OpenAI Vision"""
+    """Extract event name and artist names using OpenAI Vision"""
     try:
         with open(image_path, 'rb') as image_file:
             base64_image = base64.b64encode(image_file.read()).decode('utf-8')
-        
+
         print("querying openai")
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
@@ -127,7 +128,25 @@ def extract_artists_with_ai(image_path):
                     "content": [
                         {
                             "type": "text",
-                            "text": "This is a concert or music festival lineup poster. List ONLY the artist/DJ/band names performing, one per line. Do not include dates, venues, sponsors, or other text. Only list the actual performers/artists. Note that there might be a headliner in a different font size, or different tiers of artists in different sizes and styles. There might be different delimiters between artist names, do not include any pre or post punctuation."
+                            "text": """This is a concert or music festival lineup poster.
+
+Extract TWO pieces of information:
+1. The event/festival name (usually the largest or most prominent text)
+2. The artist/DJ/band names performing
+
+Return your response in this exact format:
+EVENT: [event name here]
+ARTISTS:
+[artist 1]
+[artist 2]
+[artist 3]
+...
+
+Important notes:
+- For artists: Do not include dates, venues, sponsors, or other text. Only list the actual performers/artists.
+- There might be a headliner in a different font size, or different tiers of artists in different sizes and styles.
+- There might be different delimiters between artist names, do not include any pre or post punctuation.
+- If you cannot find a clear event name, use "Music Festival" as the event name."""
                         },
                         {
                             "type": "image_url",
@@ -141,15 +160,33 @@ def extract_artists_with_ai(image_path):
             max_tokens=500
         )
         print(response)
-        
-        artists_text = response.choices[0].message.content
-        artists = [line.strip() for line in artists_text.split('\n') if line.strip()]
-        
-        return artists[:20]  # Limit to 20 artists
-        
+
+        content = response.choices[0].message.content
+
+        # Parse the response
+        event_name = "Music Festival"  # Default
+        artists = []
+
+        lines = content.split('\n')
+        in_artists_section = False
+
+        for line in lines:
+            line = line.strip()
+            if line.startswith('EVENT:'):
+                event_name = line.replace('EVENT:', '').strip()
+            elif line == 'ARTISTS:':
+                in_artists_section = True
+            elif in_artists_section and line:
+                artists.append(line)
+
+        return {
+            'event_name': event_name,
+            'artists': artists[:20]  # Limit to 20 artists
+        }
+
     except Exception as e:
         print(f"Error with OpenAI Vision: {traceback.format_exc()}")
-        return []
+        return {'event_name': 'Music Festival', 'artists': []}
 
 def search_artist_on_spotify(sp, artist_name):
     """Search for artist on Spotify"""
@@ -170,69 +207,102 @@ def get_artist_top_tracks(sp, artist_id, num_tracks=3):
         print(f"Error getting top tracks: {e}")
         return []
 
-@app.route('/api/upload', methods=['POST'])
-def upload():
-    """Handle image upload and playlist creation"""
+@app.route('/api/extract-artists', methods=['POST'])
+def extract_artists():
+    """Handle image upload and extract artists + event name"""
     if 'token_info' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
-    
+
     if 'file' not in request.files:
         return jsonify({'error': 'No file uploaded'}), 400
-    
+
     file = request.files['file']
     if file.filename == '':
         return jsonify({'error': 'No file selected'}), 400
-    
+
     filename = secure_filename(file.filename)
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     file.save(filepath)
-    print("hello")
-    
+
     try:
-        # Extract artists from image using AI
-        potential_artists = extract_artists_with_ai(filepath)
-        
-        if not potential_artists:
-            os.remove(filepath)
+        # Extract event name and artists from image using AI
+        extraction_result = extract_artists_with_ai(filepath)
+
+        # Clean up uploaded file
+        os.remove(filepath)
+
+        if not extraction_result['artists']:
             return jsonify({'error': 'No artists found in image'}), 400
-        
+
+        # Store extraction results in session for later use
+        session['extraction_data'] = extraction_result
+
+        return jsonify({
+            'success': True,
+            'event_name': extraction_result['event_name'],
+            'artists': extraction_result['artists']
+        })
+
+    except Exception as e:
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        print(f"Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/create-playlist', methods=['POST'])
+def create_playlist():
+    """Create Spotify playlist from approved artists"""
+    if 'token_info' not in session:
+        return jsonify({'error': 'Not authenticated'}), 401
+
+    data = request.json
+    artists = data.get('artists', [])
+    event_name = data.get('event_name', 'Music Festival')
+
+    if not artists:
+        return jsonify({'error': 'No artists provided'}), 400
+
+    try:
         # Initialize Spotify client
         sp = spotipy.Spotify(auth=session['token_info']['access_token'])
         user = sp.current_user()
-        
+
         # Search for artists and collect tracks
         all_track_uris = []
         found_artists = []
-        print(potential_artists)
-        for artist_name in potential_artists:
+
+        print(f"Searching for {len(artists)} artists...")
+        for artist_name in artists:
             artist_id = search_artist_on_spotify(sp, artist_name)
-            print(artist_name, artist_id)
+            print(f"{artist_name}: {artist_id}")
             if artist_id:
                 found_artists.append(artist_name)
-                track_uris = get_artist_top_tracks(sp, artist_id)
+                track_uris = get_artist_top_tracks(sp, artist_id, num_tracks=3)
                 all_track_uris.extend(track_uris)
-        
+
         if not all_track_uris:
-            os.remove(filepath)
             return jsonify({'error': 'Could not find any artists on Spotify'}), 400
-        
+
+        # Create playlist name with event name and date
+        today = datetime.now().strftime('%m/%d/%Y')
+        playlist_name = f"{event_name} - {today}"
+
         # Create playlist
-        playlist_name = 'Concert Lineup Mix'
         playlist = sp.user_playlist_create(
             user['id'],
             playlist_name,
             public=True,
-            description='Created from concert lineup image'
+            description=f'Created from {event_name} lineup'
         )
-        
+
         # Add tracks in batches of 100
         for i in range(0, len(all_track_uris), 100):
             batch = all_track_uris[i:i+100]
             sp.playlist_add_items(playlist['id'], batch)
-        
-        # Clean up
-        os.remove(filepath)
-        
+
+        print(f"Playlist created: {playlist_name} with {len(all_track_uris)} tracks")
+
         return jsonify({
             'success': True,
             'playlist_url': playlist['external_urls']['spotify'],
@@ -240,11 +310,10 @@ def upload():
             'artists_found': found_artists,
             'tracks_added': len(all_track_uris)
         })
-        
+
     except Exception as e:
-        if os.path.exists(filepath):
-            os.remove(filepath)
-        print(f"Error: {e}")
+        print(f"Error creating playlist: {e}")
+        print(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':

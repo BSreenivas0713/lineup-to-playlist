@@ -41,7 +41,7 @@ export default function Header({ user, onLogout }) {
             </Avatar>
             <Box>
               <Typography variant="h6" fontWeight="bold">
-                Concert Playlist Creator
+                SoundCheck
               </Typography>
               <Typography variant="body2" sx={{ color: "#b3b3b3" }}>
                 {user?.display_name

@@ -5,6 +5,7 @@ import LoginScreen from "./components/LoginScreen";
 import UploadArea from "./components/UploadArea";
 import ProcessingScreen from "./components/ProcessingScreen";
 import ResultScreen from "./components/ResultScreen";
+import ArtistReviewScreen from "./components/ArtistReviewScreen";
 import {
   Box,
   CircularProgress,
@@ -26,6 +27,9 @@ function App() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [extractedArtists, setExtractedArtists] = useState([]);
+  const [reviewMode, setReviewMode] = useState(false);
+  const [eventName, setEventName] = useState("");
+  const [creatingPlaylist, setCreatingPlaylist] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -85,6 +89,8 @@ function App() {
     setError(null);
     setResult(null);
     setExtractedArtists([]);
+    setReviewMode(false);
+    setEventName("");
 
     const formData = new FormData();
     formData.append("file", file);
@@ -94,14 +100,15 @@ function App() {
       setUploading(false);
       setProcessing(true);
 
-      const response = await axios.post(`${API_URL}/upload`, formData, {
+      const response = await axios.post(`${API_URL}/extract-artists`, formData, {
         withCredentials: true,
         headers: { "Content-Type": "multipart/form-data" },
       });
 
       if (response.data.success) {
-        setExtractedArtists(response.data.artists_found);
-        setResult(response.data);
+        setExtractedArtists(response.data.artists);
+        setEventName(response.data.event_name);
+        setReviewMode(true);
       }
     } catch (err) {
       setError(err.response?.data?.error || "Failed to process image");
@@ -111,9 +118,44 @@ function App() {
     }
   };
 
+  const handleConfirmArtists = async (confirmedEventName, confirmedArtists) => {
+    setCreatingPlaylist(true);
+    setError(null);
+
+    try {
+      const response = await axios.post(
+        `${API_URL}/create-playlist`,
+        {
+          artists: confirmedArtists,
+          event_name: confirmedEventName,
+        },
+        { withCredentials: true }
+      );
+
+      if (response.data.success) {
+        setResult(response.data);
+        setReviewMode(false);
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || "Failed to create playlist");
+      setCreatingPlaylist(false);
+    } finally {
+      setCreatingPlaylist(false);
+    }
+  };
+
+  const handleCancelReview = () => {
+    setReviewMode(false);
+    setExtractedArtists([]);
+    setEventName("");
+    setError(null);
+  };
+
   const handleReset = () => {
     setResult(null);
     setExtractedArtists([]);
+    setEventName("");
+    setReviewMode(false);
     setError(null);
   };
 
@@ -151,7 +193,7 @@ function App() {
       <Box sx={{ width: "100%", maxWidth: 900, pt: 6 }}>
         <Header user={user} onLogout={handleLogout} />
 
-        {!result && !uploading && !processing && (
+        {!result && !uploading && !processing && !reviewMode && (
           <Fade in>
             <Card
               sx={{
@@ -187,7 +229,38 @@ function App() {
             <Typography variant="h6" mt={3}>
               {uploading
                 ? "Uploading your lineup..."
-                : "Processing your image..."}
+                : "Extracting artists from your image..."}
+            </Typography>
+          </Box>
+        )}
+
+        {reviewMode && !creatingPlaylist && !result && (
+          <Fade in>
+            <Box mt={4}>
+              <ArtistReviewScreen
+                eventName={eventName}
+                artists={extractedArtists}
+                onConfirm={handleConfirmArtists}
+                onCancel={handleCancelReview}
+              />
+            </Box>
+          </Fade>
+        )}
+
+        {creatingPlaylist && (
+          <Box
+            sx={{
+              mt: 8,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#1DB954",
+            }}
+          >
+            <CircularProgress size={70} thickness={4} sx={{ color: "#1DB954" }} />
+            <Typography variant="h6" mt={3}>
+              Creating your Spotify playlist...
             </Typography>
           </Box>
         )}
@@ -197,14 +270,14 @@ function App() {
             <Box mt={4}>
               <ResultScreen
                 result={result}
-                extractedArtists={extractedArtists}
+                extractedArtists={result.artists_found}
                 onReset={handleReset}
               />
             </Box>
           </Fade>
         )}
 
-        {error && !uploading && !processing && (
+        {error && !uploading && !processing && !creatingPlaylist && (
           <Alert
             severity="error"
             variant="filled"

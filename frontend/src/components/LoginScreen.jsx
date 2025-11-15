@@ -39,12 +39,11 @@ export default function LoginScreen({ onLogin, error }) {
           </Avatar>
 
           <Typography variant="h4" fontWeight="bold" mb={2}>
-            Concert Lineup → Playlist
+            SoundCheck
           </Typography>
 
           <Typography variant="body1" color="gray" mb={4}>
-            Upload a screenshot of any concert lineup, and we’ll create a Spotify playlist
-            automatically.
+            Upload a concert lineup poster and we'll create a Spotify playlist automatically.
           </Typography>
 
           {error && (
