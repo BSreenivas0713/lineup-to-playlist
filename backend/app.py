@@ -11,6 +11,7 @@ from flask import Flask, request, jsonify, session, redirect
 from flask_cors import CORS
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
+from spotipy.cache_handler import CacheHandler
 from openai import OpenAI
 import os
 from PIL import Image
@@ -18,7 +19,7 @@ import base64
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 load_dotenv()
@@ -33,7 +34,10 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config.update(
     SESSION_COOKIE_SAMESITE="None",
-    SESSION_COOKIE_SECURE=True,  # set True if using HTTPS
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_NAME='soundcheck_session',
+    PERMANENT_SESSION_LIFETIME=timedelta(days=7)
 )
 app.secret_key = os.getenv('SECRET_KEY')
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -54,12 +58,25 @@ SCOPE = 'playlist-modify-public playlist-modify-private'
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
+# Custom cache handler that uses Flask session instead of file
+class FlaskSessionCacheHandler(CacheHandler):
+    def __init__(self, session):
+        self.session = session
+
+    def get_cached_token(self):
+        return self.session.get('spotify_token_info')
+
+    def save_token_to_cache(self, token_info):
+        self.session['spotify_token_info'] = token_info
+
 def get_spotify_oauth():
+    cache_handler = FlaskSessionCacheHandler(session)
     return SpotifyOAuth(
         client_id=SPOTIFY_CLIENT_ID,
         client_secret=SPOTIFY_CLIENT_SECRET,
         redirect_uri=SPOTIFY_REDIRECT_URI,
         scope=SCOPE,
+        cache_handler=cache_handler,
         show_dialog=True
     )
 
