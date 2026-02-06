@@ -82,10 +82,19 @@ function App() {
         withCredentials: true,
         headers: getAuthHeaders(),
       });
-      setIsAuthenticated(res.data.authenticated);
-      setUser(res.data.user);
+      if (res.data.authenticated) {
+        setIsAuthenticated(true);
+        setUser(res.data.user);
+      } else {
+        // Clear stale token from localStorage if auth failed
+        localStorage.removeItem("spotify_token_info");
+        setIsAuthenticated(false);
+        setUser(null);
+      }
     } catch (err) {
+      localStorage.removeItem("spotify_token_info");
       setIsAuthenticated(false);
+      setUser(null);
     } finally {
       setLoading(false);
     }
