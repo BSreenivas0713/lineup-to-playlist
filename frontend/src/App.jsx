@@ -18,6 +18,15 @@ import {
 axios.defaults.withCredentials = true;
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:5000/api";
 
+// Helper to get auth headers (for mobile browsers that block cookies)
+const getAuthHeaders = () => {
+  const tokenInfo = localStorage.getItem("spotify_token_info");
+  if (tokenInfo) {
+    return { Authorization: `Bearer ${tokenInfo}` };
+  }
+  return {};
+};
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState(null);
@@ -34,9 +43,14 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const authSuccess = params.get("auth") === "success";
+    const authCode = params.get("code");
     const authError = params.get("error");
 
-    if (authSuccess) {
+    if (authSuccess && authCode) {
+      // Exchange the auth code for a session (fixes mobile cookie issues)
+      window.history.replaceState({}, "", "/");
+      exchangeAuthCode(authCode);
+    } else if (authSuccess) {
       window.history.replaceState({}, "", "/");
       checkAuthStatus();
     } else if (authError) {
@@ -48,9 +62,26 @@ function App() {
     }
   }, []);
 
+  const exchangeAuthCode = async (code) => {
+    try {
+      const res = await axios.post(`${API_URL}/auth/exchange`, { code }, { withCredentials: true });
+      if (res.data.token_info) {
+        // Store in localStorage for mobile browsers that block cookies
+        localStorage.setItem("spotify_token_info", JSON.stringify(res.data.token_info));
+      }
+      checkAuthStatus();
+    } catch (err) {
+      setError("Failed to complete authentication. Please try again.");
+      setLoading(false);
+    }
+  };
+
   const checkAuthStatus = async () => {
     try {
-      const res = await axios.get(`${API_URL}/auth/status`, { withCredentials: true });
+      const res = await axios.get(`${API_URL}/auth/status`, {
+        withCredentials: true,
+        headers: getAuthHeaders(),
+      });
       setIsAuthenticated(res.data.authenticated);
       setUser(res.data.user);
     } catch (err) {
@@ -72,6 +103,7 @@ function App() {
   const handleLogout = async () => {
     try {
       await axios.post(`${API_URL}/auth/logout`, {}, { withCredentials: true });
+      localStorage.removeItem("spotify_token_info");
       setIsAuthenticated(false);
       setUser(null);
       setResult(null);
@@ -102,7 +134,7 @@ function App() {
 
       const response = await axios.post(`${API_URL}/extract-artists`, formData, {
         withCredentials: true,
-        headers: { "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": "multipart/form-data", ...getAuthHeaders() },
       });
 
       if (response.data.success) {
@@ -129,7 +161,7 @@ function App() {
           artists: confirmedArtists,
           event_name: confirmedEventName,
         },
-        { withCredentials: true }
+        { withCredentials: true, headers: getAuthHeaders() }
       );
 
       if (response.data.success) {

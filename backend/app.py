@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 import traceback
 from datetime import datetime, timedelta
 import logging
+import secrets
 
 load_dotenv()
 
@@ -87,6 +88,9 @@ def login():
     auth_url = sp_oauth.get_authorize_url()
     return jsonify({'auth_url': auth_url})
 
+# In-memory store for auth codes (use Redis in production for multiple workers)
+pending_auth_codes = {}
+
 @app.route('/api/callback')
 def callback():
     """Handle Spotify OAuth callback"""
@@ -98,23 +102,74 @@ def callback():
 
     try:
         token_info = sp_oauth.get_access_token(code)
+        session.permanent = True  # Required for PERMANENT_SESSION_LIFETIME to work
         session['token_info'] = token_info
         logger.info("User successfully authenticated with Spotify")
         logger.debug(f"Session data: {session}")
 
-        # Redirect back to frontend with success
-        return redirect(f"{os.getenv('FRONTEND_URL')}?auth=success")
+        # Generate a short-lived auth code for mobile browsers that block cookies
+        auth_code = secrets.token_urlsafe(32)
+        pending_auth_codes[auth_code] = {
+            'token_info': token_info,
+            'expires': datetime.now() + timedelta(minutes=2)
+        }
+
+        # Redirect back to frontend with auth code
+        return redirect(f"{os.getenv('FRONTEND_URL')}?auth=success&code={auth_code}")
     except Exception as e:
         logger.error(f"Spotify OAuth error: {e}")
         return redirect(f"{os.getenv('FRONTEND_URL')}?error=auth_failed")
+
+
+@app.route('/api/auth/exchange', methods=['POST'])
+def exchange_auth_code():
+    """Exchange a one-time auth code for token info (for mobile browsers)"""
+    data = request.json or {}
+    auth_code = data.get('code')
+
+    if not auth_code or auth_code not in pending_auth_codes:
+        return jsonify({'success': False, 'error': 'Invalid or expired code'}), 400
+
+    auth_data = pending_auth_codes.pop(auth_code)
+
+    # Check if expired
+    if datetime.now() > auth_data['expires']:
+        return jsonify({'success': False, 'error': 'Code expired'}), 400
+
+    # Also set session for desktop browsers that support cookies
+    session.permanent = True
+    session['token_info'] = auth_data['token_info']
+
+    logger.info("Auth code exchanged successfully")
+    # Return token info for localStorage storage (mobile-friendly)
+    return jsonify({
+        'success': True,
+        'token_info': auth_data['token_info']
+    })
+
+def get_token_info():
+    """Get token info from Authorization header or session"""
+    # Check Authorization header first (for mobile/localStorage)
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ', 1)[1]
+        try:
+            import json
+            return json.loads(token)
+        except:
+            return None
+    # Fall back to session (for desktop with cookies)
+    return session.get('token_info')
+
 
 @app.route('/api/auth/status')
 def auth_status():
     """Check if user is authenticated"""
     logger.debug(f"Checking auth status, session: {session}")
-    if 'token_info' in session:
+    token_info = get_token_info()
+    if token_info:
         try:
-            sp = spotipy.Spotify(auth=session['token_info']['access_token'])
+            sp = spotipy.Spotify(auth=token_info['access_token'])
             user = sp.current_user()
             logger.info(f"User {user.get('display_name')} authenticated")
             return jsonify({
@@ -128,7 +183,7 @@ def auth_status():
             logger.warning(f"Auth token invalid or expired: {e}")
             session.clear()
             return jsonify({'authenticated': False})
-    logger.debug("No auth token found in session")
+    logger.debug("No auth token found in session or header")
     return jsonify({'authenticated': False})
 
 @app.route('/api/auth/logout', methods=['POST'])
@@ -234,7 +289,8 @@ def get_artist_top_tracks(sp, artist_id, num_tracks=3):
 @app.route('/api/extract-artists', methods=['POST'])
 def extract_artists():
     """Handle image upload and extract artists + event name"""
-    if 'token_info' not in session:
+    token_info = get_token_info()
+    if not token_info:
         return jsonify({'error': 'Not authenticated'}), 401
 
     if 'file' not in request.files:
@@ -277,7 +333,8 @@ def extract_artists():
 @app.route('/api/create-playlist', methods=['POST'])
 def create_playlist():
     """Create Spotify playlist from approved artists"""
-    if 'token_info' not in session:
+    token_info = get_token_info()
+    if not token_info:
         return jsonify({'error': 'Not authenticated'}), 401
 
     data = request.json
@@ -289,7 +346,7 @@ def create_playlist():
 
     try:
         # Initialize Spotify client
-        sp = spotipy.Spotify(auth=session['token_info']['access_token'])
+        sp = spotipy.Spotify(auth=token_info['access_token'])
         user = sp.current_user()
 
         # Search for artists and collect tracks
